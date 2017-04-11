@@ -1,5 +1,6 @@
 # -*- encoding: utf-8 -*-
 import redis
+import falcon
 from .exception import NotRedisException
 
 
@@ -12,9 +13,11 @@ class MiddleWare(object):
         content = req.stream.read()
         key = '{}:{}'.format(path, content)
         if isinstance(self.conn, redis.StrictRedis):
-            self.conn.get(key)
-        else:
-            raise NotRedisException()
+            data = self.conn.get(key)
+            if data:
+                resp.body = data
+                resp.status = falcon.HTTP_200
+                req.context['has_cached'] = True
 
     def process_response(self, req, resp, resource, req_succeeded):
         if req.context.get('cache'):
@@ -34,12 +37,16 @@ class Cache(object):
         self.pool = redis.ConnectionPool(host=host, port=port, db=db)
         self.conn = redis.StrictRedis(connection_pool=self.pool)
 
-    def cache(self, ttl=600):
+    @staticmethod
+    def cache(ttl=600):
         def wrap1(func):
             def wrap2(cls, req, resp, *args, **kwargs):
-                func(cls, req, resp, *args, **kwargs)
-                req.context['cache'] = True
-                req.context['cache_ttl'] = ttl
+                if req.context.get('has_cached'):
+                    pass
+                else:
+                    func(cls, req, resp, *args, **kwargs)
+                    req.context['cache'] = True
+                    req.context['cache_ttl'] = ttl
 
             return wrap2
 
@@ -47,4 +54,4 @@ class Cache(object):
 
     @property
     def middleware(self):
-        return MiddleWare()
+        return MiddleWare(self.conn)
